@@ -4,6 +4,7 @@
 import numpy as np
 import xarray as xr
 import geopandas as gpd
+import rioxarray  # noqa: F401  (registers the `.rio` accessor used below)
 import shapely
 from geocube.api.core import make_geocube
 
