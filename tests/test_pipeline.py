@@ -3,6 +3,7 @@ import pytest
 import xarray as xr
 
 from build_grid import (
+    GridSpec,
     add_pixel_area,
     build_grid,
     rasterize_mask,
@@ -58,23 +59,40 @@ def test_rasterize_mask(boundary_gdf, grid):
     assert (mask.values == 1).all()
 
 
-def test_build_grid_geojson_roundtrip(boundary_gdf, grid, res, crs):
-    """Every emitted cell maps back to its zarr index, one polygon per in-bound cell."""
-    mask = rasterize_mask(boundary_gdf, grid)
-    x = grid.x.values
-    y = grid.y.values
-    shape = (x.size, y.size)
-    gdf = build_grid_geojson(shape, (x, y), res, mask, crs)
+@pytest.fixture
+def wide_grid(res, crs):
+    """Non-square 2 x 3 grid (ny=2, nx=3) so an nx/ny swap can't pass unnoticed."""
+    return GridSpec(bounds=(0.0, 0.0, 1.5, 1.0), res=res, crs=crs)
 
-    assert len(gdf) == int(mask.values.sum()) == 4
+
+def test_build_grid_geojson_roundtrip(wide_grid, res, crs):
+    """Every emitted cell maps back to its zarr index; out-of-bound cells are dropped."""
+    mask = xr.DataArray(
+        np.array([[1, 1, 1],
+                  [1, 1, 0]]),                     # drop the bottom-right cell (iy=1, ix=2)
+        dims=("y", "x"),
+        coords={"y": wide_grid.y, "x": wide_grid.x},
+    )
+    gdf = build_grid_geojson(wide_grid, mask)
+
+    assert len(gdf) == int(mask.values.sum()) == 5
+    assert (1, 2) not in set(zip(gdf.iy, gdf.ix))
     assert set(["iy", "ix", "x", "y"]).issubset(gdf.columns)
     assert gdf.crs == crs
 
     for row in gdf.itertuples():
         # index round-trip: clicked cell -> correct zarr coordinate
-        assert grid.x.isel(x=row.ix).item() == row.x
-        assert grid.y.isel(y=row.iy).item() == row.y
-        # each polygon spans exactly one cell (res x res)
+        assert wide_grid.x[row.ix] == row.x
+        assert wide_grid.y[row.iy] == row.y
+        # each polygon spans exactly one cell (res x res), centered on (x, y)
         minx, miny, maxx, maxy = row.geometry.bounds
         assert maxx - minx == pytest.approx(res)
         assert maxy - miny == pytest.approx(res)
+        assert row.geometry.centroid.x == pytest.approx(row.x)
+        assert row.geometry.centroid.y == pytest.approx(row.y)
+
+
+def test_build_grid_geojson_rejects_mismatched_mask(wide_grid):
+    """A mask in the wrong (nx, ny) order fails fast instead of mislabeling cells."""
+    with pytest.raises(ValueError, match="mask shape"):
+        build_grid_geojson(wide_grid, np.ones((3, 2)))
