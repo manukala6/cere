@@ -9,20 +9,23 @@ import xarray as xr
 from flox.xarray import xarray_reduce
 
 from build_grid import GridSpec
+from checks import FINE_BASE, FineBase, overlaps, validate
 
 
 def summarize_landcover(
-        base: xr.DataArray,
+        base: FineBase,
         grid: GridSpec,
         mask: xr.DataArray,
         #rule: ClassRule
 ) -> xr.DataArray:
     """Sum fine pixels into the coarse `grid` cells, then mask cells outside the boundary.
 
-    `base` must already be prepared by prep_base: clipped to `grid.bounds`
-    (`clip_base`) and carrying a `pixel_area_ha` coord (`add_pixel_area`).
+    `base` comes from `prep_base.prepare_base` (clipped to `grid.bounds`, with a
+    `pixel_area_ha` coord); it is re-checked against `checks.FINE_BASE` on entry so
+    direct callers (e.g. notebooks) get the same protection.
     `mask` is the coarse (y, x) mask from `rasterize_mask(boundary, grid.to_dataset())`.
     """
+    validate(base, FINE_BASE + [overlaps(grid.bounds)], "base")
     minx, miny, maxx, maxy = grid.bounds
 
     # Probability-weighted tree area per fine pixel (ha): P(tree) * area.

@@ -1,9 +1,25 @@
 import numpy as np
 import xarray as xr
 
-from build_grid import Bounds
+from build_grid import Bounds, GridSpec
+from checks import FINE_BASE, FINE_GRID, FineBase, overlaps, validate
 
 EARTH_RADIUS_M = 6_371_008.8
+
+
+def prepare_base(base: xr.DataArray, grid: GridSpec) -> FineBase:
+    """Clip the fine source to `grid`, attach pixel area, and validate it for summarize_landcover.
+
+    Validates at each handoff so a failure names its real cause:
+    the source's layout and overlap before clipping, the clip itself (>= 2 pixels
+    each way, which add_pixel_area needs), and the finished base against FINE_BASE.
+    """
+    validate(base, FINE_GRID + [overlaps(grid.bounds)], "source")
+    base = clip_base(base, grid.bounds)
+    validate(base, FINE_GRID, "clipped source")
+    base = add_pixel_area(base)
+    validate(base, FINE_BASE, "prepared base")
+    return FineBase(base)
 
 def clip_base(base: xr.DataArray, bbox: Bounds) -> xr.DataArray:
     """ Clip base analysis layer to study area"""
