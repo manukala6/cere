@@ -37,7 +37,7 @@ base = add_pixel_area(base)
 
 # mask pixels
 
-# calcualte shares per grid cells
+# calculate shares per grid cells
 
 ###### ADD CLIMATE LAYERS
 # add ERA5-Land KDD and GDD

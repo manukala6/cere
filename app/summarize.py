@@ -6,7 +6,6 @@ from typing import Callable, Iterable, Protocol, runtime_checkable
 
 import numpy as np
 import xarray as xr
-import geopandas as gpd
 from flox.xarray import xarray_reduce
 
 from build_grid import GridSpec
@@ -14,22 +13,17 @@ from build_grid import GridSpec
 
 def summarize_landcover(
         base: xr.DataArray,
-        boundary: gpd.GeoDataFrame,
+        grid: GridSpec,
         mask: xr.DataArray,
-        res: float,
-        crs: str = "EPSG:4326"
         #rule: ClassRule
 ) -> xr.DataArray:
+    """Sum fine pixels into the coarse `grid` cells, then mask cells outside the boundary.
 
-    minx, miny, maxx, maxy = boundary.to_crs(crs).total_bounds
-    grid = GridSpec.from_bounds((minx, miny, maxx, maxy), res, crs)
-
-    # clip the fine grid to the coarse extent
+    `base` must already be prepared by prep_base: clipped to `grid.bounds`
+    (`clip_base`) and carrying a `pixel_area_ha` coord (`add_pixel_area`).
+    `mask` is the coarse (y, x) mask from `rasterize_mask(boundary, grid.to_dataset())`.
+    """
     minx, miny, maxx, maxy = grid.bounds
-    base = base.sel(y=slice(maxy, miny), x=slice(minx, maxx))
-
-    # add pixel area 
-    base = add_pixel_area(base)
 
     # Probability-weighted tree area per fine pixel (ha): P(tree) * area.
     ## TODO: THIS IS HARDCODED FOR TTC, REMOVE LATER

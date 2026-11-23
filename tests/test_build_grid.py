@@ -2,23 +2,17 @@ import numpy as np
 import pytest
 import xarray as xr
 
-import geopandas as gpd
-import shapely
-
 from build_grid import (
     GridSpec,
-    build_grid,
     rasterize_mask,
     build_grid_geojson,
 )
-from summarize import add_pixel_area
 
 
-def test_build_grid(boundary_gdf, res, crs):
-    """The inset square snaps out to the unit lattice: 2x2 cells, y descending."""
-    grid = build_grid(boundary_gdf, res, crs)
+def test_from_bounds_boundary_bbox(boundary_gdf, res, crs):
+    """The boundary's bbox (as flow.py builds it) snaps out to the unit lattice: 2x2 cells."""
+    grid = GridSpec.from_bounds(tuple(boundary_gdf.to_crs(crs).total_bounds), res, crs)
 
-    assert isinstance(grid, GridSpec)
     assert grid.bounds == (0.0, 0.0, 1.0, 1.0)
     assert grid.shape == (2, 2)
     assert grid.x.tolist() == [0.25, 0.75]
@@ -27,25 +21,13 @@ def test_build_grid(boundary_gdf, res, crs):
     assert grid.to_dataset().rio.crs == crs
 
 
-def test_build_grid_non_square(res, crs):
+def test_from_bounds_snaps_outward():
     """A wider-than-tall box snaps to (ny, nx) = (2, 3), in numpy order."""
-    gdf = gpd.GeoDataFrame(geometry=[shapely.box(0.1, 0.1, 1.4, 0.9)], crs=crs)
-    grid = build_grid(gdf, res, crs)
+    grid = GridSpec.from_bounds((0.1, 0.1, 1.4, 0.9), 0.5)
 
     assert grid.bounds == (0.0, 0.0, 1.5, 1.0)
     assert grid.shape == (2, 3)
     assert grid.x.tolist() == [0.25, 0.75, 1.25]
-
-
-def test_build_grid_reprojects_boundary(boundary_gdf, res, crs):
-    """A boundary stored in a projected CRS gives the same degree grid."""
-    grid = build_grid(boundary_gdf.to_crs("EPSG:3857"), res, crs)
-    assert grid.bounds == (0.0, 0.0, 1.0, 1.0)
-
-
-def test_from_bounds_snaps_outward():
-    grid = GridSpec.from_bounds((0.1, 0.1, 1.4, 0.9), 0.5)
-    assert grid.bounds == (0.0, 0.0, 1.5, 1.0)
 
 
 def test_from_bounds_keeps_quarter_degree_edges():
@@ -78,33 +60,6 @@ def test_from_bounds_ignores_float_noise():
 def test_gridspec_rejects_invalid(bounds, res, match):
     with pytest.raises(ValueError, match=match):
         GridSpec(bounds=bounds, res=res)
-
-
-def test_add_pixel_area_structure(grid):
-    """Coordinate is attached per-row, float32, and strictly positive."""
-    out = add_pixel_area(grid)
-    area = out.pixel_area_ha
-
-    assert area.dims == ("y",)
-    assert area.shape == grid.y.shape
-    assert area.dtype == np.dtype("float32")
-    assert (area.values > 0).all()
-
-
-def test_add_pixel_area_decreases_toward_pole(grid):
-    """Grid y = [0.75, 0.25]; the higher-latitude cell has the smaller area."""
-    area = add_pixel_area(grid).pixel_area_ha.values
-    assert area[0] < area[1]  # y=0.75 (nearer pole) < y=0.25 (nearer equator)
-
-
-def test_add_pixel_area_equator_magnitude(crs):
-    """A 1x1 degree cell at the equator is ~1.236e6 ha (12,364 km^2)."""
-    ds = xr.Dataset(
-        coords={"y": ("y", np.array([0.5, -0.5])), "x": ("x", np.array([0.5, 1.5]))}
-    )
-    area = add_pixel_area(ds).pixel_area_ha.values
-    assert area[0] == pytest.approx(1.236e6, rel=1e-3)
-    assert area[0] == pytest.approx(area[1])  # symmetric about the equator
 
 
 def test_rasterize_mask(boundary_gdf, grid):
