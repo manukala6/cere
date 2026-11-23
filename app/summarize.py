@@ -11,23 +11,6 @@ from flox.xarray import xarray_reduce
 
 from build_grid import GridSpec
 
-EARTH_RADIUS_M = 6_371_008.8
-
-def add_pixel_area(da) -> xr.DataArray:
-    """Add per-row pixel area (ha) as a `pixel_area_ha` coordinate.
-
-    Area depends only on latitude: each cell spans `dx` in longitude and `dy`
-    in latitude, so its area is R^2 * dx_rad * (sin(lat+half) - sin(lat-half)).
-    """
-    dx = float(da.x[1] - da.x[0])
-    dy = abs(float(da.y[1] - da.y[0]))
-    lat = np.radians(da.y.values)
-    half = np.radians(dy) / 2
-    area_ha = (
-        EARTH_RADIUS_M**2 * np.radians(dx) * (np.sin(lat + half) - np.sin(lat - half)) / 1e4
-    )
-    return da.assign_coords(pixel_area_ha=("y", area_ha.astype("float32")))
-
 
 def summarize_landcover(
         base: xr.DataArray,
@@ -68,7 +51,7 @@ def summarize_landcover(
         expected_groups=np.arange(grid.nx), dim="x",
     )
     analysis_grid = xarray_reduce(
-        tmp, iy, func="sum", fill_value=0,
+        tmp, iy, func="sum", fill_value=0,      ## Allow for other aggregations other than sum
         expected_groups=np.arange(grid.ny), dim="y",
     )
 

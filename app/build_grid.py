@@ -85,7 +85,7 @@ class GridSpec:
         return xr.Dataset(coords={"y": ("y", self.y), "x": ("x", self.x)}).rio.write_crs(self.crs)
 
 
-def rasterize_mask(boundary_gdf, grid):
+def rasterize_mask(boundary_gdf: gpd.GeoDataFrame, grid: xr.Dataset) -> xr.DataArray:
     """Rasterize the boundary onto `grid` -> (y, x) array, 1 inside / 0 outside."""
     boundary_gdf = boundary_gdf.to_crs(grid.rio.crs)
     boundary_gdf = boundary_gdf.assign(in_bound=1)
