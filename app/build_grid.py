@@ -9,20 +9,61 @@ import shapely
 from geocube.api.core import make_geocube
 from dataclasses import dataclass
 
-EARTH_RADIUS_M = 6_371_008.8
 Bounds = tuple[float, float, float, float]
+
+# Tolerance (in cells) for float noise when checking/snapping to the res lattice.
+_LATTICE_TOL = 1e-9
+
 
 @dataclass(frozen=True)
 class GridSpec:
-    "Creates the summary grid to aggregate the base LULC data"
+    """Regular lat/lon summary grid that the base LULC data is aggregated onto.
+
+    `bounds` must already span a whole number of `res` cells; use
+    `GridSpec.from_bounds` to snap arbitrary bounds outward first.
+    """
     bounds: Bounds
     res: float
     crs: str = "EPSG:4326"
 
     def __post_init__(self) -> None:
-        # res > 0
+        """Validate only; never modify the inputs."""
         if self.res <= 0:
-            raise ValueError(f"Resolution must be a positive float")
+            raise ValueError(f"res must be positive, got {self.res}")
+        minx, miny, maxx, maxy = self.bounds
+        if not (minx < maxx and miny < maxy):
+            raise ValueError(f"bounds must satisfy minx < maxx and miny < maxy, got {self.bounds}")
+        if miny < -90 or maxy > 90:
+            raise ValueError(
+                f"y bounds must lie within [-90, 90] (GridSpec expects degrees), got {self.bounds}"
+            )
+        for name, extent in (("x", maxx - minx), ("y", maxy - miny)):
+            cells = extent / self.res
+            if abs(cells - round(cells)) > _LATTICE_TOL * max(1.0, cells):
+                raise ValueError(
+                    f"{name} extent {extent} is not a whole number of {self.res} cells; "
+                    f"use GridSpec.from_bounds to snap the bounds"
+                )
+
+    @classmethod
+    def from_bounds(cls, bounds: Bounds, res: float, crs: str = "EPSG:4326") -> "GridSpec":
+        """Snap arbitrary bounds outward onto the global `res` lattice (multiples of res).
+
+        Snaps via integer cell indices, so values like -10.25 at res=0.25 stay exact
+        (rounding to a fixed number of decimals would turn them into -10.2).
+        """
+        if res <= 0:
+            raise ValueError(f"res must be positive, got {res}")
+        minx, miny, maxx, maxy = bounds
+
+        def snap(value: float, op) -> float:
+            # round the index first so float noise (2.9999999999999996) can't add a cell
+            index = op(np.round(value / res, 9))
+            return float(np.round(index * res, 10))
+
+        snapped = (snap(minx, np.floor), snap(miny, np.floor),
+                   snap(maxx, np.ceil), snap(maxy, np.ceil))
+        return cls(bounds=snapped, res=res, crs=crs)
 
     @property 
     def nx(self) -> int: return round((self.bounds[2] - self.bounds[0]) / self.res)
@@ -44,21 +85,6 @@ class GridSpec:
         return xr.Dataset(coords={"y": ("y", self.y), "x": ("x", self.x)}).rio.write_crs(self.crs)
 
 
-def add_pixel_area(ds):
-    """Add per-row pixel area (ha) as a `pixel_area_ha` coordinate.
-
-    Area depends only on latitude: each cell spans `dx` in longitude and `dy`
-    in latitude, so its area is R^2 * dx_rad * (sin(lat+half) - sin(lat-half)).
-    """
-    dx = float(ds.x[1] - ds.x[0])
-    dy = abs(float(ds.y[1] - ds.y[0]))
-    lat = np.radians(ds.y.values)
-    half = np.radians(dy) / 2
-    area_ha = (
-        EARTH_RADIUS_M**2 * np.radians(dx) * (np.sin(lat + half) - np.sin(lat - half)) / 1e4
-    )
-    return ds.assign_coords(pixel_area_ha=("y", area_ha.astype("float32")))
-
 def rasterize_mask(boundary_gdf, grid):
     """Rasterize the boundary onto `grid` -> (y, x) array, 1 inside / 0 outside."""
     boundary_gdf = boundary_gdf.to_crs(grid.rio.crs)
@@ -70,19 +96,6 @@ def rasterize_mask(boundary_gdf, grid):
         fill=0,
     )
     return mask["in_bound"]
-
-
-def build_grid(boundary_gdf, res, crs) -> GridSpec:
-    """Build an empty xarray grid at `res` degrees covering the boundary bbox.
-
-    Bounds are snapped outward to a clean `res` lattice; coordinates are cell
-    centers with y descending (to match typical raster orientation).
-    """
-    minx, miny, maxx, maxy = boundary_gdf.total_bounds
-
-    Grid = GridSpec(bounds=(minx, miny, maxx, maxy), res=res)
-    
-    return Grid
 
 
 def build_grid_geojson(grid: GridSpec, mask: xr.DataArray) -> gpd.GeoDataFrame:
